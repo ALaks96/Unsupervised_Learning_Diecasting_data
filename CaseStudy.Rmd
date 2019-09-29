@@ -1,0 +1,529 @@
+---
+title: "Case Study Alexis Laks"
+author: Alexis Laks
+output:
+  html_document: default
+  pdf_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r}
+library(FactoInvestigate)
+library(FactoMineR)
+library(ggplot2)
+library(readxl)
+library(tidyverse)
+library(corrplot)
+library(cluster) 
+library(fossil)
+```
+
+
+# Presentation of the case study
+## EasyKost
+A common approach to determine the cost of products is the **should cost** method.
+It consists in estimating what a product should cost based on materials, labor, overhead, and profit margin. Although this strategy is very accurate, it has the drawback of being tedious and it requires expert knowledge of industrial technologies and processes. 
+To get a quick estimation, it is possible to build a statistical model to predict the cost of products given their characteristics.
+With such a model, it would no longer be necessary to be an expert or to wait several days to assess the impact of a design modification, a change in supplier or a change in production site. Before builing a model, it is important to explore the data which is the aim of this case study.
+
+## Die Casting
+This study was carried out for a company that sells parts for the car industry. They build many parts themselves, but because they don't have foundries, they don't make die-cast parts and they need to buy them. 
+To bid on tenders, they usually ask their supplier how much the die-cast part will cost them. However, suppliers may take time to respond and the company may lose the tender. Therefore, they want to try to use the data to estimate the price of die-casting accurately and quickly without consulting the supplier, and thus be able to respond to the call for tenders.
+
+Some explanation for some variables.
+"EXW cost" : unit price, (ex-works price: no transport) 
+"Yearly Volume":  Annual order volume: number of items ordered.
+                   
+This allows for an identical line in the data except for the volume to have a different price, since in general, the purchase volume is an important cost-driver.
+
+**1) Import and summarize the data.**
+
+```{r include=FALSE}
+diecasting <- read_excel("diecasting.xlsx")
+dim(diecasting)
+names(diecasting)
+class(diecasting)
+summary(diecasting)
+head(diecasting)
+```
+
+the diecasting dataset is a dataframe containing 19 variables and 211 observations, the varaibles are
+information on these 211 diecasting parts from various suppliers. Information on these parts range from where the part came from to how it was cooled, so we have a vast amount of info on each part.
+We have both quantitative and qualitative variable, an important feature to keep in mind when we go further in our analysis. 
+
+**2)** __We start with univariate and bivariate descriptive statistics. Using appropriate plot(s) or summaries answer the following questions__
+
+**2.1** How is the distribution of the cost? Comment your plot with respect to the quartiles of the cost.
+
+```{r}
+don <- as.data.frame(diecasting)
+par(mfrow=c(1,2))
+don %>%
+  ggplot() +
+  aes(x = `EXW cost`) +
+  geom_histogram(fill = "blue") +
+  ggtitle("Cost of diecasting parts")
+don %>%
+  ggplot() +
+  aes(x = NULL, y = `EXW cost`) +
+  geom_boxplot(fill = "blue") +
+  ggtitle("Cost of diecasting parts")
+```
+
+The histogram above seems to ressemble a skewed normal distribution, with data centeredaround ~17 let's check the quantiles if they match. 
+
+```{r}
+qqnorm(diecasting$`EXW cost`);qqline(diecasting$`EXW cost`)
+```
+ Although the tails are heavy (to be expected when we have skewness) the distribution does seem to be approximately normal.
+
+**2.2** Which are the most frequent suppliers? 
+
+The most frequent suppliers are those with the biggest yearly volume. We thus have:
+
+```{r}
+max(don$`Yearly Volume`) # To get an idea of what we should expect
+don %>% 
+  arrange(desc(`Yearly Volume`)) %>% 
+  group_by(Supplier) %>% 
+  summarise(supply = sum(`Yearly Volume`)) %>% 
+  top_n(100,supply) %>% 
+  arrange(desc(supply))
+```
+
+So the top 3 suppliers are Admiral, les espaces and Excalibur. 
+
+**2.3** _Does the cost depend on the Net weight? on Yearly Volume?  Does this make sense to you? Can you explain (from a business point of view) the form of the relationship for high volume values.
+
+```{r}
+par(mfrow = c(1,2))
+don %>% 
+  select(`EXW cost`,`Net Weight (kg)`) %>% 
+  ggplot() +
+  aes(x = `Net Weight (kg)`, y = `EXW cost`) +
+  geom_point() +
+  geom_smooth() 
+don %>% 
+  select(`EXW cost`,`Yearly Volume`) %>% 
+  ggplot() +
+  aes(x = `Yearly Volume`, y = `EXW cost`) +
+  geom_point() +
+  geom_smooth() 
+cor(don$`EXW cost`,don$`Yearly Volume`)
+cor(don$`EXW cost`,don$`Net Weight (kg)`)
+```
+
+Seems there is a positive relationship between Net Weight and cost which just seems logical (the bigger the piece the higher the price). As for Yearly Volume and cost it makes sense as well given the property of economies of scale. The more production there is the more costs decrease, bigger lot sizes given overall economic profit bring costs down. 
+
+**2.4** Let $n=25$.  Generate variables  $X$ and $Y$ by drawing observations from independent gaussian distributions with mean $\mu=(0)_{1 \times 2}$ and covariance matrix $\text{Id}_{2 \times 2}$. Compute the value of the correlation coefficient. Repeat the process 100 times and take the quantile at 95% of this empirical distribution (under the null hypothesis of no linear relationship) of the correlation coefficient.  Comment the results. What should be learned from this experience?
+
+```{r echo=TRUE}
+# library(MASS)
+n <- 25
+XY <- MASS::mvrnorm(n, c(0,0), matrix(c(1,0,0,1),2,2))
+X <- rnorm(25,0,1)
+Y <- rnorm(25,0,1)
+cor(XY[,1],XY[,2])
+samples <- lapply(1:100, function(i) MASS::mvrnorm(n, c(0,0), matrix(c(1,0,0,1),2,2)))
+cors <- sapply(samples, function(xy) cor(xy[,1],xy[,2]))
+var(cors)
+mean(cors)
+hist(cors)
+quantile(cors, 0.95)
+```
+
+Given their independence the correlation coefficient of the two random variables should be very close to 0 (cov(x,y) = 0 from the properties of gaussian vectors whose components are independent. We see there are slight deviations from that exact property of independance despite having imposed it when generating random variables, this means that when we do see links between varaibles we shouldn't be too hasty in interpreting them as really correlated. 
+
+**2.5** Does the cost depend on the Cooling ?
+
+```{r}
+data <- don %>% 
+  mutate(Cooling = as.factor(Cooling))
+summary(lm(data$`EXW cost` ~ data$Cooling))
+
+don %>% 
+  select(Cooling,`EXW cost`) %>% 
+  ggplot() +
+  aes(x = Cooling, y = `EXW cost`) + 
+  geom_boxplot(fill = "blue") +
+  ggtitle("Cost in function of cooling method")
+```
+
+We see no real difference in costs in function of different cooling methods since they don't vary much in distribution across categories.
+
+**2.6** Which is the less expensive Supplier?
+
+We can't just rely on least EXWcost, since this will vary in funcion of the quantity. So we'll approximate the expensiveness of suppliers by the average cost per unit of volume.
+
+```{r}
+don %>% 
+  group_by(Supplier) %>% 
+  summarise(total_volume = sum(`Yearly Volume`), total_cost = sum(`EXW cost`)) %>% 
+  mutate(av_price = total_cost/total_volume) %>% 
+  arrange(av_price)
+
+don %>% 
+  select(Supplier,`EXW cost`) %>% 
+  ggplot() +
+  aes(x = Supplier, y = `EXW cost`) + 
+  geom_boxplot(fill = "blue") +
+  ggtitle("Cost in function of supplier") +
+  coord_flip()
+```
+
+Seems the less expensive supplier is Admiral. 
+
+**3)** __One important point in exploratory data analysis consists in identifying potential outliers.__
+
+**3.1** Could you give points which are suspect regarding the Cost variable. Give the characteristics (other features) of the observations. We could keep them but keep in mind their presence and check if results are not too affected by these points. 
+
+I'll show suspicious points by looking at the cost in function of the most obvious and first varaible we should check 
+
+```{r}
+don %>% 
+  select(`EXW cost`,`Net Weight (kg)`) %>% 
+  ggplot() +
+  aes(x = `Net Weight (kg)`, y = `EXW cost`) +
+  geom_point()
+```
+
+There are 5 points which seem suspicious, they don't fit the general increasing line we can easily imagine with the above data let's look at them.
+
+```{r}
+don %>% filter(`EXW cost` > 40 & `Net Weight (kg)` < 2)
+```
+
+There isn't any redundant feature in regards to all the other variables considered in our data so this either could be an error in registering the data (either weight isn't appropriate or cost etc.) or there is another characteristic not mentionned in our data. 
+
+**3.2** Inspect the variable nb Threading, in views of its values of  what could you suggest? 
+
+```{r}
+don %>% 
+  select(`EXW cost`,`nb Threading`) %>% 
+  ggplot() +
+  aes(x = `nb Threading`, y = `EXW cost`) +
+  geom_point()
+
+levels(as.factor(don$`nb Threading`))
+```
+
+We find the same setting as Net Weight, so nb threading isn't behind this increase in cost. If it was we could expect higher costs for higher number of threading. Or it may be that there is an optimal number of threading which makes the product exceptional or that it is very rare. 
+
+**4)** __Perform a PCA on the dataset DieCast__.
+
+```{r echo=TRUE}
+data <- data.frame(diecasting) %>% mutate(ID = as.character(ID))
+
+class <- as.data.frame(sapply(data,class))
+class
+# We need to take into account that we have string vectors etc. 
+
+# ID was defined as numeric so we needed to transform it so the PCA wouldn't "take it into account"
+# don_pca <- don %>% select(-ID)
+
+strings <- c(which(class$`sapply(data, class)`!="numeric")) 
+# Defined a vector containing indexes of all the string vectors in our data
+don_num <- data %>%
+  select_if(is.numeric) 
+
+estim_ncp(don_num, method = "GCV")
+estim_ncp(don_num, method = "Smooth")
+# We check the best number of dimensions to be kept when running our PCA, here it recommends considering only 2 dimensions from both methods!
+
+res.pca <- PCA(data, quali.sup=strings, quanti.sup = 19, ncp = 2, scale=T)
+# We scale here to take into account difference in scales in our data (YearlyVolume goes up to nx10000 whereas nb threading doesn't go above 20..) as to not put to much weight on variables with important values.
+```
+
+We see some points that are detached from the others in the individuals plot which could correspond to those wierd points we pointed out earlier!
+
+**4.1** Explain briefly what are the aims of PCA and how categorical variables are handled?_
+
+The aim of PCA is finding the best representation of a cloud of data in multiple dimensions in 2 dimensions as to be readable/interpretable by the human eye. Concerning categorical variables, PCA will project the categories at the point which minimizes the distance between that point and all observations which fall within the given catogery/ies, it's a sort of center of gravity of observations from a same category. 
+
+**4.2** Compute the correlation matrix between the variables and comment it with respect to the correlation circle.
+
+```{r}
+don_cor <- cor(don_num)
+round(cor(don_cor),2)
+
+corrplot(don_cor,type = "lower")
+plot.PCA(res.pca, choix = "var", cex = 0.7)
+```
+
+To compare the two plots I'll focus first on strong correlations identified for both and see if they coincide through a few examples:
+- Surface envelop and Net Weight are positively highly correlated for the correlation plot, and are almost aligned in the correlation circle from the PCA
+- Net weight and Surface envelop are strongly correlated with EXW Cost from the correlation plot, this is reflected in the correlation circle fiven the angle between their projections is tight. 
+- Yearly volume and Nb machining surface have correlation of 0 and they are orthogonal in the correlation plot. 
+
+The PCA seems to have conserved the actual correlations between variables in our data, although the projection of EXW cost isn't as good as we would like, the length of the vector being a bit small.
+
+
+**4.3** On what kind of relationship PCA focuses? Is it a problem?
+
+PCA focuses on linear relationships of our data, and although it might seem restrictive as their exists many other ways to consider the relationships between data (log, quadratic, etc.) considering linear relationships is very reasonnable for an initial approximation.
+
+**4.4** Give the the R object with the two principal components which are the synthetic variables the most correlated to all the variables.
+
+We sam before that the best number of dimensions to represent the variability of our data was 2, so in any case I only have those two components to show you... They would be also those in a PCA where we wouldn't have limited the PCA to 2 dimensions. 
+
+```{r}
+res.pca$var$cor
+PC <- data.frame(round(cbind(res.pca$var$cor,res.pca$var$cos2,res.pca$var$contrib),2))
+colnames(PC) <- c("Correlation PC1","Correlation PC2","Cos2 PC1","Cos2 PC2","Contribution PC1","Contribution PC2")
+PC
+```
+
+**5)** __Clustering__
+
+__5.1)__ Principal components methods such as PCA is often used as a pre-processing step before applying a clustering algorithm, explain the rationale of this approach and how many components you should keep.
+
+PCA can be peroformed on a dataset before going through clustering methods when there is a large amount of varaibles. It denoises our data to allow a more stable clustering by keeping only a the first principal components such that we keep 95% of the inertia (we don't want to lose too much information). 
+In addition, combining both methods gives us plots which allow better interpretation so it's only benefitial if we're cautious about restricting the number of dimensions we keep. 
+
+__5.2)__ To simultaneously take into account quantitative and categorical variables in the clustering you should use the clustering on the results of the FAMD ones. FAMD stands for Factorial Analysis of Mixed Data and is a PCA dedicated to mixed data. Explain what will be the impacts of such an analysis on the results?_
+
+Obviously the principal components will change since FAMD will take into account qualitative variables instead of calculating the barycenter of data that fall within the classes of the qualitative variables. Here FAMD will balance the influence of each varaible when computing the distance between an individual when projected and the center of gravity of the cloud. 
+
+__5.3)__ Perform the FAMD, and keep the principal components you want for the clustering.   
+
+```{r}
+don %>%
+  select(`EXW cost`,idPhoto) %>% 
+  mutate(idPhoto = as.factor(idPhoto)) %>% 
+  ggplot() +
+  aes(x = idPhoto, y = `EXW cost`) +
+  geom_point() +
+  geom_smooth() 
+```
+
+No relation between idphoto and cost, I decide to discard it for my kmmeans, I get rid of date as well as I don't know if the cost was determined after the transatcion or if it is the cost at the date where it was made. Il also get rid of ID since it's just an identifier. 
+
+```{r}
+data.frame(sapply(diecasting,class)) # Identify strings
+
+don_famd <- diecasting %>% # Encode strings as factors
+  mutate(Supplier = as.factor(Supplier)) %>% 
+  mutate(`Supplier Country` = as.factor(`Supplier Country`)) %>% 
+  mutate(`Raw material` = as.factor(`Raw material`)) %>% 
+  mutate(Finishing = as.factor(Finishing)) %>% 
+  mutate(`Over molding` = as.factor(`Over molding`)) %>% 
+  mutate(Assembly = as.factor(Assembly)) %>% 
+  mutate(Cooling = as.factor(Cooling)) %>% 
+  mutate(Process = as.factor(Process)) %>% 
+  select(-c(ID,Date,idPhoto)) 
+
+res.famd <- FAMD(don_famd, graph = TRUE, sup.var = 16, ncp = 31)
+```
+
+Here a compromise is to be done between the amount of inertia we want to keep which increases with the number of dimensions, and the actual number of dimensions which we don't want to be too high. I think keeping at least 80% of the inertia is a good compromise, which corresponds to keeping 31 ncp's. 
+
+__5.4)__ Perfom a kmeans algorithm on the selected principal components of FAMD. To select how many cluster you are keeping, you can represent the evolution of the ratio between/total intertia. Justify your choices.
+
+```{r echo=TRUE}
+pc <- data.frame(res.famd$ind$coord)
+
+res.kmeanss <- lapply(1:210, function(i) kmeans(res.famd$ind$coord,centers = i,nstart = 10))
+qual_kmeans <- sapply(1:210, function(i) (res.kmeanss[[i]]$betweens)/(res.kmeanss[[i]]$totss)) 
+ggplot(data = NULL,aes(x = 1:210,y = qual_kmeans)) + geom_point() + labs(x = "k clusters", y = "between/total ienrtia ratio", title = "evolution of quality of clustering") + geom_vline(xintercept = 32, color = "red")
+```
+
+Here we need to make a choice, we want to choose a certain number of clusters such that we keep a an acceptable percentage of within cluster inertia, but not take too much clusters as it goes against the purpose of clusters since we would end up with as much clusters as observations.
+We see here that the marginal increase in percentage of between inertia/ total inertia decreases a lot when reaching approx. 30 clusters, but choosing the corresponding number of clusters would make us take way too many clusters. I'll re-iterate my analysis but on a closer interval:
+
+```{r echo=TRUE}
+res.kmeanss <- lapply(1:10, function(i) kmeans(res.famd$ind$coord,centers = i,nstart = 10))
+qual_kmeans <- sapply(1:10, function(i) (res.kmeanss[[i]]$betweens)/(res.kmeanss[[i]]$totss)) 
+ggplot(data = NULL,aes(x = 1:10,y = qual_kmeans)) + geom_point() + labs(x = "k clusters", y = "between/total ienrtia ratio", title = "evolution of quality of clustering") + geom_line()
+```
+
+I'm hesitating between between clustering ranging from 3 to 7. Let's see what they look like:
+
+```{r}
+res.kmeans <- kmeans(pc, centers = 7, nstart=100)
+clusplot(pc, res.kmeans$cluster, color=TRUE, 
+  	labels=5, lines=4)
+data_desc <-cbind.data.frame(don_famd,classe=factor(res.kmeans$cluster))
+data_desc %>% group_by(classe) %>% summarise(obs = n())
+```
+
+The clusters might be good, but we get this one cluster with only one observation which either means this a real outlier within our data or that we've chosen just a bit too much clusters and kmeans found a way to minimize between class inertia by attributing this one observation to a cluster. Let's see the point in question: 
+
+```{r}
+data_desc %>% filter(classe == "1")
+```
+
+From the exploratory data analysis we led previously, this point is far from being an outlier. In order to get the optimal number of clusters where this point is indeed intergrated to one of the main clusters instead of being on itself, we need to set the kmeans on 4 clusters:
+
+```{r}
+res.kmeans <- kmeans(pc, centers = 4, nstart=100)
+clusplot(pc, res.kmeans$cluster, color=TRUE, 
+  	labels=5, lines=4)
+data_desc <-cbind.data.frame(don_famd,classe=factor(res.kmeans$cluster))
+data_desc %>% group_by(classe) %>% summarise(obs = n())
+```
+
+__5.5)__ To Describe the clusters, you can use catdes function, by concatenating your dataset to the variable specifying in which cluster each observation is and indicating that you want to describe this variable (that must be as a factor).
+
+```{r}
+cluster_desc <- catdes(data_desc, num.var = 17)
+```
+
+__5.6)__ Comment the results and describe precisely one cluster._
+
+```{r}
+cluster_desc$category$`1` 
+```
+
+Since this cluster is big, I'll give the main characterisics. We can see for example that we will find 100% of the diecasting parts coming from mexico fall within our first cluster. We can also see that 95% of the parts produced from the AL 5371 material are in this same cluster. We are also certain that parts from Italy, India, made from either Al 4234, Al 4235, AC 46000 and gone through standard cooling are absolutely not within the first cluster. We can repeat this analysis based on the Cla/Mod column which gives us the percentage of observation with a specific characteristic which belong to a certain cluster. 
+
+**5.7)** If someone asks you why you have selected k components to perform the clustering and not k+1 or k-1, what is your answer? (could you suggest a strategy to assess the stability of the approach?  are there many differences between the clustering obtained on k components or on the initial data). You can have a look at the Rand Index.
+
+We chose beforehand to compromise between a minimum amount of principle components in our FAMD in order to keep our dimension reductions and denoising to what it was meant for, but sufficiently enough of them to keep enough inertia to describe our data correctly. This led us to choosing 31 dimensions on which we would project our data, where 80% of the inertia was kept. Theoretically, we could decide to use k+1 or k-1 components but our choice of threshold was made on keeping 80% of the inertia. This depends how much you're ready to lose in inertia in order to denoize. 
+To assess the stability of this approach we can compare the clustering on the raw data vs the denoized one for several level of inertias kept(i.e several thresholds of ncps). To compare this we will use the rand index which computes a ratio of similarities/similarities+dissimilarities to assess the differences we mentionned before.
+
+```{r echo=TRUE}
+# Different levels of ncp for FAMD
+
+pc0 <- FAMD(don_famd, graph = TRUE, sup.var = c(1,2,18), ncp = 31)$ind$coord
+pc_low <- FAMD(don_famd, graph = TRUE, sup.var = c(1,2,18), ncp = 15)$ind$coord # Our original choice 
+pc_high <- FAMD(don_famd, graph = TRUE, sup.var = c(1,2,18), ncp = 45)$ind$coord
+
+# Comparing the according clusterings:
+
+rand.index(kmeans(pc0, centers = 4, nstart=100)$cluster, kmeans(pc_low, centers = 4, nstart=100)$cluster)
+rand.index(kmeans(pc0, centers = 4, nstart=100)$cluster, kmeans(pc_high, centers = 4, nstart=100)$cluster)
+```
+
+We see that choosing much less principal components or much more does not change much in terms of clustering from the rand index. At least with our threshold we're not advancing blindfolded and are sure that we decided of ncp=31 in order to keep at least 80% of the inertia. 
+
+__6) The methodology that you have used to describe clusters can also be used to describe a categorical variable, for instance the supplier country. Use the function catdes and explain how this information can be useful for the company.__
+
+```{r}
+cluster_desc2 <- catdes(data_desc, num.var = 4)
+```
+
+This can be very interesting for the company indeed since we have a representation of the percentage of diecasting parts with a specific characteristic fall within parts coming from each country. If they are looking for oa diecasting part with a specific material used for its fabrication, they could find it using the info we have from the catdes function. To illustrate this let's look at the the parts coming from china : 
+
+```{r}
+cluster_desc2$category$China
+```
+
+For example, if the company wants specifically parts made out of the material Al 4235, they will find 100 % of our data regarding these parts come from china, thus reducing the search and focusing on other characteristics. 
+
+**7)** __Perform a model to predict the cost. Explain how the previous analysis can help you interpret the results.__
+
+First we need to transform some of the quantitative variables (scale them) in order to get better results from our model since they will act alongside categorical variables that will have levels that surely don't surpass the dozen:
+
+```{r}
+don_model <- don_famd %>% 
+  mutate(`Yearly Volume` = log(`Yearly Volume`)) %>% 
+  mutate(`Surface envelop (LG x lg) (mm2)` = log(`Surface envelop (LG x lg) (mm2)`)) %>% 
+  mutate(`nb Machining Surfaces` = sqrt(`nb Machining Surfaces`)) # we scale variables to run a coherent regression
+```
+
+Now that our varaibles are scaled, my idea is to make a regression per cluster. My though being that since we only have certain levels of a categorical variable in each cluster (for example china in cluster 1, not at all in 2,3 etc..) this could avoid running a regression on the whole data and having to pick varaibles (obviously they won't all fit in the regression) from this huge package. By runing models per cluster, we are focusing on specific data and the link between their characteristics and cost without biasing our view, since we aren't discarding varaibles, only discarding certain levels that aren't relevant to our data.
+I'll use the stepwise method to select among var-levels in each cluster, even though it's a greedy method it can give a first step of a model:
+
+# Model 1
+
+```{r}
+don_cluster_1 <- data_desc %>% 
+  filter(classe == "1") %>% 
+  select(-c(classe,`Over molding`))
+model_full1 <- lm(`EXW cost` ~ ., data = don_cluster_1)
+model_null1 <- lm(`EXW cost` ~ 1, data = don_cluster_1)
+step(model_null1, direction="both", scope=list(upper=model_full1,lower=model_null1))
+
+Model_cl1 <- lm(formula = `EXW cost` ~ `Net Weight (kg)` + Finishing, data = don_cluster_1)
+
+Model_cl1 %>% summary()
+
+par(mfrow = c(2,2))
+plot(Model_cl1)
+```
+
+The residuals aren't the best but they are ok, independance and constant variance seems to be approximately verified, we see some points with very high leverage but they remain within cook's distance so not much to worry about, and the residuals are approximately normally distributed according to the qqplot. Our model makes sense according to the p-value of the F-statistic, although the R2 is low this doesn't mean much in our case. 
+
+# Model 2:
+
+```{r}
+don_cluster_2 <- data_desc %>% 
+  filter(classe == "2") %>% 
+  select(-classe)
+model_full2 <- lm(`EXW cost` ~ ., data = don_cluster_2)
+model_null2 <- lm(`EXW cost` ~ 1, data = don_cluster_2)
+step(model_null2, direction="both", scope=list(upper=model_full2,lower=model_null2))
+
+Model_cl2 <- lm(formula = `EXW cost` ~ `Net Weight (kg)` + `nb Cores` + `Raw material` + 
+    `Supplier Country` + `Yearly Volume` + Assembly, data = don_cluster_2)
+
+Model_cl2 %>% summary()
+
+par(mfrow = c(2,2))
+plot(Model_cl2)
+```
+
+Same as model one, we get some good posteriori confirmation of our residuals, a lot of the variables within our model are strongly individually significant, the p-value of the F statistic is very low so our model makes sense. 
+
+# Model 3:
+
+
+```{r}
+don_cluster_3 <- data_desc %>% 
+  filter(classe == "3") %>% 
+  select(-classe)
+model_full3 <- lm(`EXW cost` ~ ., data = don_cluster_3)
+model_null3 <- lm(`EXW cost` ~ 1, data = don_cluster_3)
+step(model_null3, direction="both", scope=list(upper=model_full3,lower=model_null3))
+
+Model_cl3 <- lm(formula = `EXW cost` ~ `nb Threading` + Cooling + `Net Weight (kg)` + 
+    `Surface envelop (LG x lg) (mm2)` + `nb Cores` + `nb Machining Surfaces` + 
+    Supplier + `Raw material` + Process, data = don_cluster_3)
+
+Model_cl3 %>% summary()
+
+par(mfrow = c(2,2))
+plot(Model_cl3)
+```
+
+Here we could have the same comments as before, although the residuals are not good at all. The regression model may not fit this particular cluster, this could be due to some very influential and with high leverage points as we see in the residuals plots. 
+
+# Model 4:
+
+Here a specific problem with models per cluster comes up. All the variables that only have one level are unusable, we can't estimate the effect on the cost of a change in that variable if it doesn't change at all in our data. So we need to remove them, and this constitutes the weak point of this method in general. Although I think it works well since a lot of our categorical variables divide into multiple levels and we're left with tons of variables on which our regression is supposed to fit. 
+
+```{r}
+don_cluster_4 <- data_desc %>% 
+  filter(classe == "4") %>% 
+  select(-c(classe,Cooling,`Supplier Country`)) # Removing one-level vars
+
+model_full4 <- lm(`EXW cost` ~ ., data = don_cluster_4)
+model_null4 <- lm(`EXW cost` ~ 1, data = don_cluster_4)
+step(model_null4, direction="both", scope=list(upper=model_full4,lower=model_null4))
+
+Model_cl4 <- lm(formula = `EXW cost` ~ `Net Weight (kg)`, data = don_cluster_4)
+
+Model_cl4 %>% summary()
+
+par(mfrow = c(2,2))
+plot(Model_cl4)
+```
+
+The only appropriate model seems to be the one corresponding to cluster 2, which is the second most filled (in bn of observations) cluster when looking both at the residuals and the overall and individual significance of the variables. If I were to propose a model in any case, I think the above one is one way to approach the problem. Althoug we can't say for sure since we don't have much data (only 211 observation for more than 15 variables) which makes this analysis and the construction of a prediction model very complicated.
+
+**8)** __If someone asked you why you did one global model and not one model per supplier, what would be your answer?__
+
+That would have been omitting a valuable predictor for each. Suppliers are competing on the international scene, or even local, discarding other suppliers on the market as a variable would be ignoring the forces that drive quantities and prices on markets worldwide. The objective of estimating the "Should cost" of a product hasn't changed, only we wouldn't be taking into account the influence that the market has on the overall price if we were constructing separate models for each supplier. This is actually a regression problem, omitted-variable-bias, where the residuals are correlated with the outcome varaible. Generally to counter this problem an instrumental variables method can be implemented (or equivalent method 2stage least squares) when we have no idea of what this omitted variable is. 
+
+**9)** __These data contained missing values. One representative in the compagny suggests either to put 0 in the missing cells or to impute with the median of the variables. Comment. For the categorical variables with missing values, it is decided to create a new category ???missing???. Comment.__
+
+Replacing NA's by zeros or the median of a given varaible can very rarely be a good idea. Althoug using the median is already better than replacing by zeros, we are still far from any optimal way of hanling missing data. The problem in imputing data by this same value is that it will drastically affect the covariance and correlation that exists within our data. By replacing them by this arbitrary value, we are also completely ignoring the potential reason why they were missing to begin with, which is a valuable information in itself. This falls within the underlying properties of missing values, they can either be MCAR, MAR or MNAR. Once we've determined the reason why they are missing, we can then assess what strategy we may want to implement to handle the NA's. In general, it is assumed that the data are at least MAR, in which case there are several more optimal ways to handle this problem. Iterative PCA is one example (classic/regularized/soft dependening on level of noise in the data) if we wish to do point estimates, we could also consider multiple imputation methods like joint/conditional modelling and bootstrap PCA. 
+As for creating a new variable Missing which takes value zero for observations containing na's and ones otherwise, in addition to taking the risk of being left with very few data, we are also taking the risk of ignoring a potential subsample representative of a whole portion of the population studied. Not only would it be then impossible to extend our analysis/prediction on that ignored subpopulation, but it will also bias our analysis for the data we do consider.
+
+
